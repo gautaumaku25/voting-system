@@ -262,33 +262,27 @@ class DemographicsDashboard:
         with st.form(f"data_entry_form_{table_choice}"):
             st.write(f"Enter data for {table_choice}")
             
-            # Common fields for all tables
+            # Fields based on the image
+            electoral_id = st.text_input("Electoral ID")
             name = st.text_input("Name")
-            age = st.number_input("Age", min_value=0, max_value=150)
+            gender = st.selectbox("Gender", ["F", "M"])
+            location = st.selectbox("Location", ["POREBADA EAST", "POREBADA WEST"])
             occupation = st.text_input("Occupation")
-            marital_status = st.selectbox("Marital Status", 
-                ["Single", "Married", "Widowed", "Divorced"])
-            education_level = st.selectbox("Education Level",
-                ["Primary", "Secondary", "Tertiary", "None"])
+            dob = st.date_input("Date of Birth")
             
-            # Additional fields based on table
-            if "east" in table_choice:
-                village = st.selectbox("Village", 
-                    ["Kouderika", "Kerea", "Umuka", "Other"])
-            else:  # west table
-                village = st.selectbox("Village", 
-                    ["Veriabada", "Poreporena", "Other"])
-
             submitted = st.form_submit_button("Submit")
             
             if submitted:
+                # Convert date to text format matching the image (DD-MMM-YYYY)
+                dob_formatted = dob.strftime("%d-%b-%Y")
+                
                 data = {
+                    "electoral_id": electoral_id,
                     "name": name,
-                    "age": age,
+                    "gender": gender,
+                    "location": location,
                     "occupation": occupation,
-                    "marital_status": marital_status,
-                    "education_level": education_level,
-                    "village": village
+                    "dob": dob_formatted
                 }
                 
                 if DatabaseOperations.insert_record(table_choice, data):
