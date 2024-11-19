@@ -1,16 +1,10 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import plotly.express as px
 import psycopg2
 import logging
 from psycopg2.extras import RealDictCursor
-from dotenv import load_dotenv
-import os
 from typing import Optional, Dict, Any
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -26,9 +20,8 @@ if 'data_changed' not in st.session_state:
 class DatabaseConnection:
     @staticmethod
     def get_connection_params() -> Dict[str, Any]:
-        """Get database connection parameters based on environment"""
-        if hasattr(st, 'secrets'):
-            logger.info("Using Streamlit Cloud configuration")
+        """Get database connection parameters from Streamlit secrets"""
+        try:
             return {
                 'host': st.secrets["postgres"]["host"],
                 'database': st.secrets["postgres"]["database"],
@@ -38,28 +31,19 @@ class DatabaseConnection:
                 'connect_timeout': 15,
                 'sslmode': 'require'
             }
-        else:
-            logger.info("Using local environment configuration")
-            return {
-                'host': os.getenv("DB_HOST"),
-                'database': os.getenv("DB_NAME"),
-                'user': os.getenv("DB_USER"),
-                'password': os.getenv("DB_PASSWORD"),
-                'port': os.getenv("DB_PORT"),
-                'connect_timeout': 15
-            }
+        except Exception as e:
+            logger.error(f"Error reading secrets: {e}")
+            st.error("Error reading database configuration. Please check your secrets.toml file.")
+            return {}
 
     @staticmethod
     def get_connection() -> Optional[psycopg2.extensions.connection]:
         """Create and return a database connection"""
         try:
             connection_params = DatabaseConnection.get_connection_params()
-            
-            # Verify connection parameters
-            missing_params = [k for k, v in connection_params.items() if not v]
-            if missing_params:
-                raise ValueError(f"Missing connection parameters: {', '.join(missing_params)}")
-            
+            if not connection_params:
+                return None
+                
             conn = psycopg2.connect(**connection_params)
             
             # Test connection
@@ -70,8 +54,9 @@ class DatabaseConnection:
             logger.info("Database connection successful")
             return conn
             
-        except (psycopg2.OperationalError, ValueError) as e:
-            DatabaseConnection.handle_connection_error(e)
+        except psycopg2.OperationalError as e:
+            logger.error(f"Database connection failed: {e}")
+            st.error("Could not connect to database. Please check your connection settings.")
             return None
             
         except Exception as e:
@@ -79,135 +64,34 @@ class DatabaseConnection:
             st.error(f"An unexpected error occurred: {str(e)}")
             return None
 
-    @staticmethod
-    def handle_connection_error(error: Exception) -> None:
-        """Handle database connection errors"""
-        if isinstance(error, psycopg2.OperationalError):
-            logger.error(f"Database connection failed (Operational): {error}")
-            if "could not connect to server" in str(error):
-                st.error("Could not connect to database server. Please verify the host and port.")
-            elif "password authentication failed" in str(error):
-                st.error("Authentication failed. Please check your credentials.")
-            else:
-                st.error(f"Database connection failed: {str(error)}")
-        elif isinstance(error, ValueError):
-            logger.error(f"Configuration error: {error}")
-            st.error(str(error))
-
 class DatabaseOperations:
     @staticmethod
-    def get_table_data(table_name: str) -> pd.DataFrame:
-        """Fetch data from specified table"""
+    def get_ward_demographics() -> pd.DataFrame:
+        """Fetch data from porebada_ward_demographics view"""
         conn = DatabaseConnection.get_connection()
         if conn is None:
             return pd.DataFrame()
         
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute(f"SELECT * FROM {table_name}")
+                cursor.execute("SELECT * FROM porebada_ward_demographics")
                 data = cursor.fetchall()
                 return pd.DataFrame(data)
         except Exception as e:
-            logger.error(f"Error fetching data from {table_name}: {e}")
+            logger.error(f"Error fetching ward demographics: {e}")
             st.error(f"Error fetching data: {str(e)}")
             return pd.DataFrame()
         finally:
             if conn:
                 conn.close()
 
-    @staticmethod
-    def insert_record(table_name: str, data: Dict[str, Any]) -> bool:
-        """Insert new record into database"""
-        conn = DatabaseConnection.get_connection()
-        if conn is None:
-            return False
-        
-        try:
-            with conn.cursor() as cursor:
-                columns = ', '.join(data.keys())
-                placeholders = ', '.join(['%s'] * len(data))
-                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                
-                cursor.execute(query, list(data.values()))
-                conn.commit()
-                logger.info(f"Successfully inserted record into {table_name}")
-                st.success("Record added successfully!")
-                st.session_state.data_changed = True
-                return True
-        except Exception as e:
-            DatabaseOperations.handle_database_error(conn, e, "inserting")
-            return False
-        finally:
-            if conn:
-                conn.close()
-
-    @staticmethod
-    def update_record(table_name: str, seq: int, data: Dict[str, Any]) -> bool:
-        """Update existing record"""
-        conn = DatabaseConnection.get_connection()
-        if conn is None:
-            return False
-        
-        try:
-            with conn.cursor() as cursor:
-                set_values = ', '.join([f"{k} = %s" for k in data.keys()])
-                query = f"UPDATE {table_name} SET {set_values} WHERE seq = %s"
-                
-                values = list(data.values()) + [seq]
-                cursor.execute(query, values)
-                conn.commit()
-                
-                logger.info(f"Successfully updated record {seq} in {table_name}")
-                st.success("Record updated successfully!")
-                st.session_state.data_changed = True
-                return True
-        except Exception as e:
-            DatabaseOperations.handle_database_error(conn, e, "updating")
-            return False
-        finally:
-            if conn:
-                conn.close()
-
-    @staticmethod
-    def delete_record(table_name: str, seq: int) -> bool:
-        """Delete record from database"""
-        conn = DatabaseConnection.get_connection()
-        if conn is None:
-            return False
-        
-        try:
-            with conn.cursor() as cursor:
-                query = f"DELETE FROM {table_name} WHERE seq = %s"
-                cursor.execute(query, (seq,))
-                conn.commit()
-                
-                logger.info(f"Successfully deleted record {seq} from {table_name}")
-                st.success("Record deleted successfully!")
-                st.session_state.data_changed = True
-                return True
-        except Exception as e:
-            DatabaseOperations.handle_database_error(conn, e, "deleting")
-            return False
-        finally:
-            if conn:
-                conn.close()
-
-    @staticmethod
-    def handle_database_error(conn: Optional[psycopg2.extensions.connection], 
-                            error: Exception, operation: str) -> None:
-        """Handle database operation errors"""
-        if conn:
-            conn.rollback()
-        logger.error(f"Error {operation} record: {error}")
-        st.error(f"Error {operation} record: {str(error)}")
-
 class DemographicsDashboard:
     def display(self):
         """Display demographics dashboard"""
-        st.header("Demographics Dashboard")
+        st.header("Porebada Ward Demographics")
         
         # Fetch data
-        df = DatabaseOperations.get_table_data('demographics')
+        df = DatabaseOperations.get_ward_demographics()
         if df.empty:
             st.warning("No data available to display")
             return
@@ -218,40 +102,73 @@ class DemographicsDashboard:
 
     def _display_metrics(self, df: pd.DataFrame):
         """Display key metrics"""
-        col1, col2, col3 = st.columns(3)
+        total_population = df['total_population'].sum()
+        total_male = df['male_population'].sum()
+        total_female = df['female_population'].sum()
+        working_age = df['age_15_64'].sum()
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
-            st.metric("Total Population", f"{df['population'].sum():,}")
+            st.metric("Total Population", f"{total_population:,}")
         with col2:
-            st.metric("Average Age", f"{df['average_age'].mean():.1f}")
+            st.metric("Male Population", f"{total_male:,}")
         with col3:
-            st.metric("Total Households", f"{df['households'].sum():,}")
+            st.metric("Female Population", f"{total_female:,}")
+        with col4:
+            st.metric("Working Age (15-64)", f"{working_age:,}")
 
     def _display_charts(self, df: pd.DataFrame):
         """Display visualizations"""
         col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Population by Area")
-            fig = px.bar(df, x='area', y='population',
-                        title='Population Distribution')
-            st.plotly_chart(fig, use_container_width=True)
-            
+            # Gender distribution by ward
+            fig_gender = px.bar(
+                df,
+                x='ward_id',
+                y=['male_population', 'female_population'],
+                title='Population by Gender and Ward',
+                barmode='group',
+                labels={'value': 'Population', 'variable': 'Gender'},
+                color_discrete_sequence=['#1f77b4', '#ff7f0e']
+            )
+            st.plotly_chart(fig_gender, use_container_width=True)
+        
         with col2:
-            st.subheader("Age Distribution")
-            fig = px.pie(df, values='population', names='age_group',
-                        title='Population by Age Group')
-            st.plotly_chart(fig, use_container_width=True)
+            # Age distribution by ward
+            age_data = pd.melt(
+                df,
+                id_vars=['ward_id'],
+                value_vars=['age_0_14', 'age_15_64', 'age_65_plus'],
+                var_name='Age Group',
+                value_name='Population'
+            )
+            fig_age = px.bar(
+                age_data,
+                x='ward_id',
+                y='Population',
+                color='Age Group',
+                title='Age Distribution by Ward',
+                barmode='stack'
+            )
+            st.plotly_chart(fig_age, use_container_width=True)
 
     def _display_data_table(self, df: pd.DataFrame):
         """Display interactive data table"""
-        st.subheader("Demographic Data")
-        st.dataframe(
-            df.style.format({
-                'population': '{:,}',
-                'households': '{:,}',
-                'average_age': '{:.1f}'
-            })
-        )
+        st.subheader("Detailed Demographics Data")
+        
+        # Format numeric columns
+        formatted_df = df.copy()
+        numeric_cols = ['total_population', 'male_population', 'female_population', 
+                       'age_0_14', 'age_15_64', 'age_65_plus', 
+                       'household_count', 'avg_household_size', 'population_density']
+        
+        for col in numeric_cols:
+            if col in formatted_df.columns:
+                formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "N/A")
+        
+        st.dataframe(formatted_df, use_container_width=True)
 
 def main():
     # Page configuration
@@ -260,7 +177,7 @@ def main():
         page_icon="📊",
         layout="wide"
     )
-    st.title("Porebada Ward Database Management System")
+    st.title("Porebada Ward Demographics Dashboard")
 
     # Test database connection
     with st.spinner("Connecting to database..."):
@@ -278,20 +195,9 @@ def main():
     except Exception:
         pass
 
-    # Sidebar navigation
-    st.sidebar.title("Navigation")
-    page = st.sidebar.selectbox(
-        "Select a page",
-        ["Demographics Dashboard", "Data Management"]
-    )
-
-    # Display selected page
-    if page == "Demographics Dashboard":
-        dashboard = DemographicsDashboard()
-        dashboard.display()
-    else:
-        st.header("Data Management")
-        # Add your data management UI here
+    # Display dashboard
+    dashboard = DemographicsDashboard()
+    dashboard.display()
 
 if __name__ == "__main__":
     main()
