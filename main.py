@@ -5,6 +5,10 @@ from datetime import datetime
 import pytz
 from hashlib import sha256
 import numpy as np
+from datetime import date
+
+# Set Papua New Guinea timezone
+PNG_TZ = pytz.timezone('Pacific/Port_Moresby')
 
 # Initialize connection
 def init_connection():
@@ -15,6 +19,15 @@ def init_connection():
         password=st.secrets["postgres"]["password"],
         port=st.secrets["postgres"]["port"]
     )
+
+# Format date to match database format with PNG timezone
+def format_date(date_obj):
+    png_date = datetime.now(PNG_TZ).replace(
+        year=date_obj.year,
+        month=date_obj.month,
+        day=date_obj.day
+    )
+    return png_date.strftime("%d-%b-%Y")
 
 # Fetch voter data
 def get_voter_data():
@@ -35,7 +48,6 @@ def init_database():
     conn = init_connection()
     cur = conn.cursor()
     
-    # Create candidates table if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS candidates (
             id SERIAL PRIMARY KEY,
@@ -43,7 +55,6 @@ def init_database():
         )
     """)
     
-    # Create votes table if not exists
     cur.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             id SERIAL PRIMARY KEY,
@@ -52,29 +63,27 @@ def init_database():
             candidate_1 INTEGER REFERENCES candidates(id),
             candidate_2 INTEGER REFERENCES candidates(id),
             candidate_3 INTEGER REFERENCES candidates(id),
-            timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'Pacific/Port_Moresby')
         )
     """)
     
     conn.commit()
     conn.close()
 
-# Add sample candidates if none exist
 def add_sample_candidates():
     conn = init_connection()
     cur = conn.cursor()
     
-    # Check if candidates exist
     cur.execute("SELECT COUNT(*) FROM candidates")
     count = cur.fetchone()[0]
     
     if count == 0:
         sample_candidates = [
-            "John Doe",
-            "Jane Smith",
-            "Peter Brown",
+            "John Smith",
             "Mary Johnson",
-            "Robert Wilson"
+            "David Williams",
+            "Sarah Brown",
+            "Michael Davis"
         ]
         
         for candidate in sample_candidates:
@@ -83,18 +92,16 @@ def add_sample_candidates():
     conn.commit()
     conn.close()
 
-# Verify voter
 def verify_voter(name, dob):
     voters_df = get_voter_data()
+    formatted_dob = format_date(dob)
     return voters_df[
         (voters_df['name'].str.lower() == name.lower()) & 
-        (voters_df['dob'] == dob)
+        (voters_df['dob'] == formatted_dob)
     ]
 
-# Cast vote
 def cast_vote(voter_name, electoral_id, pref1, pref2, pref3):
-    png_tz = pytz.timezone('Pacific/Port_Moresby')
-    current_time = datetime.now(png_tz)
+    current_time = datetime.now(PNG_TZ)
     
     conn = init_connection()
     cur = conn.cursor()
@@ -107,7 +114,6 @@ def cast_vote(voter_name, electoral_id, pref1, pref2, pref3):
     conn.commit()
     conn.close()
 
-# Check if voter has already voted
 def has_voted(electoral_id):
     conn = init_connection()
     cur = conn.cursor()
@@ -118,16 +124,13 @@ def has_voted(electoral_id):
     conn.close()
     return count > 0
 
-# Get voting results
 def get_results():
     conn = init_connection()
     cur = conn.cursor()
     
-    # Get candidates
     cur.execute("SELECT id, name FROM candidates")
     candidates = dict(cur.fetchall())
     
-    # Get preference counts
     preferences = {}
     for i in range(1, 4):
         cur.execute(f"""
@@ -138,7 +141,6 @@ def get_results():
         """)
         preferences[i] = {candidates[row[0]]: row[1] for row in cur.fetchall()}
     
-    # Get voting history
     cur.execute("""
         SELECT voter_name, 
                c1.name as pref1, 
@@ -159,11 +161,12 @@ def get_results():
 def main():
     st.set_page_config(page_title="LPV Voting System", layout="wide")
     
-    # Initialize database and add sample candidates
     init_database()
     add_sample_candidates()
     
-    # Sidebar navigation
+    current_png_time = datetime.now(PNG_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
+    st.sidebar.write(f"Current PNG Time: {current_png_time}")
+    
     page = st.sidebar.radio("Navigation", ["Login", "Results"])
     
     if page == "Login":
@@ -171,11 +174,25 @@ def main():
         
         with st.form("voter_login"):
             name = st.text_input("Full Name")
-            dob = st.date_input("Date of Birth")
+            
+            max_date = datetime.now(PNG_TZ).date()
+            min_date = date(1924, 1, 1)
+            default_date = date(1970, 1, 1)
+            
+            dob = st.date_input(
+                "Date of Birth",
+                min_value=min_date,
+                max_value=max_date,
+                value=default_date,
+                help="Format: DD-Mon-YYYY (e.g., 06-May-1970)"
+            )
+            
+            st.caption(f"Selected date in required format: {format_date(dob)}")
+            
             submit = st.form_submit_button("Login")
             
             if submit:
-                voter = verify_voter(name, str(dob))
+                voter = verify_voter(name, dob)
                 if not voter.empty:
                     electoral_id = voter.iloc[0]['electoral_id']
                     
@@ -191,7 +208,6 @@ def main():
                 else:
                     st.error("Invalid voter credentials!")
         
-        # Voting section
         if 'voter' in st.session_state:
             st.subheader("Cast Your Vote")
             
@@ -227,7 +243,6 @@ def main():
         
         preferences, history = get_results()
         
-        # Display preference counts
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -245,13 +260,13 @@ def main():
             if preferences[3]:
                 st.bar_chart(preferences[3])
         
-        # Display voting history
         st.subheader("Voting History")
         if history:
             df = pd.DataFrame(
                 history,
                 columns=['Voter Name', 'Preference 1', 'Preference 2', 'Preference 3', 'Timestamp']
             )
+            df['Timestamp'] = pd.to_datetime(df['Timestamp']).dt.tz_convert('Pacific/Port_Moresby')
             st.dataframe(df)
 
 if __name__ == "__main__":
