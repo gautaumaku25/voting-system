@@ -85,20 +85,78 @@ class DatabaseOperations:
             if conn:
                 conn.close()
 
+    @staticmethod
+    def get_table_data(table_name: str) -> pd.DataFrame:
+        """Fetch data from specified table"""
+        conn = DatabaseConnection.get_connection()
+        if conn is None:
+            return pd.DataFrame()
+        
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(f"SELECT * FROM {table_name}")
+                data = cursor.fetchall()
+                return pd.DataFrame(data)
+        except Exception as e:
+            logger.error(f"Error fetching data from {table_name}: {e}")
+            st.error(f"Error fetching data: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def insert_record(table_name: str, data: Dict[str, Any]) -> bool:
+        """Insert a new record into specified table"""
+        conn = DatabaseConnection.get_connection()
+        if conn is None:
+            return False
+
+        try:
+            columns = ', '.join(data.keys())
+            values = ', '.join([f"%({k})s" for k in data.keys()])
+            query = f"INSERT INTO {table_name} ({columns}) VALUES ({values})"
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, data)
+            conn.commit()
+            st.success("Record added successfully!")
+            return True
+        except Exception as e:
+            logger.error(f"Error inserting record: {e}")
+            st.error(f"Error inserting record: {str(e)}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
 class DemographicsDashboard:
     def display(self):
-        """Display demographics dashboard"""
-        st.header("Porebada Ward Demographics")
+        """Display complete dashboard"""
+        # Create tabs for different sections
+        tab_main, tab_details, tab_entry = st.tabs([
+            "Main Dashboard",
+            "Detailed Records",
+            "Data Entry"
+        ])
         
-        # Fetch data
-        df = DatabaseOperations.get_ward_demographics()
-        if df.empty:
-            st.warning("No data available to display")
-            return
-        
-        self._display_metrics(df)
-        self._display_charts(df)
-        self._display_data_table(df)
+        with tab_main:
+            st.header("Porebada Ward Demographics")
+            # Fetch and display main dashboard
+            df = DatabaseOperations.get_ward_demographics()
+            if df.empty:
+                st.warning("No data available to display")
+                return
+            
+            self._display_metrics(df)
+            self._display_charts(df)
+            self._display_data_table(df)
+            
+        with tab_details:
+            self._display_detailed_tables()
+            
+        with tab_entry:
+            self._display_data_entry()
 
     def _display_metrics(self, df: pd.DataFrame):
         """Display key metrics"""
@@ -169,6 +227,72 @@ class DemographicsDashboard:
                 formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "N/A")
         
         st.dataframe(formatted_df, use_container_width=True)
+
+    def _display_detailed_tables(self):
+        """Display individual demographic tables"""
+        st.subheader("Detailed Population Records")
+        
+        tab1, tab2, tab3 = st.tabs([
+            "East Ward - Female", 
+            "East Ward - Male",
+            "West Ward - Male & Female"
+        ])
+        
+        with tab1:
+            df_east_female = DatabaseOperations.get_table_data("porebada_east_female")
+            st.dataframe(df_east_female, use_container_width=True)
+            
+        with tab2:
+            df_east_male = DatabaseOperations.get_table_data("porebada_east_male")
+            st.dataframe(df_east_male, use_container_width=True)
+            
+        with tab3:
+            df_west = DatabaseOperations.get_table_data("porebada_west_male_female")
+            st.dataframe(df_west, use_container_width=True)
+
+    def _display_data_entry(self):
+        """Display data entry forms for all tables"""
+        st.subheader("Data Entry")
+        
+        table_choice = st.selectbox(
+            "Select table for data entry",
+            ["porebada_east_female", "porebada_east_male", "porebada_west_male_female"]
+        )
+
+        with st.form(f"data_entry_form_{table_choice}"):
+            st.write(f"Enter data for {table_choice}")
+            
+            # Common fields for all tables
+            name = st.text_input("Name")
+            age = st.number_input("Age", min_value=0, max_value=150)
+            occupation = st.text_input("Occupation")
+            marital_status = st.selectbox("Marital Status", 
+                ["Single", "Married", "Widowed", "Divorced"])
+            education_level = st.selectbox("Education Level",
+                ["Primary", "Secondary", "Tertiary", "None"])
+            
+            # Additional fields based on table
+            if "east" in table_choice:
+                village = st.selectbox("Village", 
+                    ["Kouderika", "Kerea", "Umuka", "Other"])
+            else:  # west table
+                village = st.selectbox("Village", 
+                    ["Veriabada", "Poreporena", "Other"])
+
+            submitted = st.form_submit_button("Submit")
+            
+            if submitted:
+                data = {
+                    "name": name,
+                    "age": age,
+                    "occupation": occupation,
+                    "marital_status": marital_status,
+                    "education_level": education_level,
+                    "village": village
+                }
+                
+                if DatabaseOperations.insert_record(table_choice, data):
+                    st.session_state.data_changed = True
 
 def main():
     # Page configuration
