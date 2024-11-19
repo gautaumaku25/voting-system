@@ -204,10 +204,10 @@ def main():
                             'electoral_id': electoral_id
                         }
                         st.success("Login successful! Please proceed to vote.")
-                        st.experimental_rerun()
                 else:
                     st.error("Invalid voter credentials!")
         
+        # Move voting form outside the login form
         if 'voter' in st.session_state:
             st.subheader("Cast Your Vote")
             
@@ -236,7 +236,7 @@ def main():
                         )
                         st.success("Vote cast successfully!")
                         del st.session_state['voter']
-                        st.experimental_rerun()
+                        st.rerun()
     
     else:  # Results page
         st.title("Voting Results")
