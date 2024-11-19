@@ -262,7 +262,7 @@ class DemographicsDashboard:
         with st.form(f"data_entry_form_{table_choice}"):
             st.write(f"Enter data for {table_choice}")
             
-            # Fields based on the image
+            # Fields based on the database schema
             electoral_id = st.text_input("Electoral ID")
             name = st.text_input("Name")
             gender = st.selectbox("Gender", ["F", "M"])
@@ -273,8 +273,8 @@ class DemographicsDashboard:
             submitted = st.form_submit_button("Submit")
             
             if submitted:
-                # Convert date to text format matching the image (DD-MMM-YYYY)
-                dob_formatted = dob.strftime("%d-%b-%Y")
+                # Convert date to DD-Mon-YYYY format
+                dob_formatted = dob.strftime("%d-%b-%Y")  # This will format like "07-Jun-2002"
                 
                 data = {
                     "electoral_id": electoral_id,
