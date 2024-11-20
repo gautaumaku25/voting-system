@@ -6,9 +6,35 @@ import pytz
 from hashlib import sha256
 import numpy as np
 from datetime import date
+import os
 
 # Set Papua New Guinea timezone
 PNG_TZ = pytz.timezone('Pacific/Port_Moresby')
+
+# Add PWA metadata to HTML head
+def add_pwa_tags():
+    pwa_tags = """
+        <link rel="manifest" href="static/manifest.json">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#000000">
+        <link rel="icon" type="image/png" sizes="192x192" href="static/icon-192.png">
+        <link rel="icon" type="image/png" sizes="512x512" href="static/icon-512.png">
+        <link rel="apple-touch-icon" href="static/icon-192.png">
+        <script>
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', function() {
+                    navigator.serviceWorker.register('static/service-worker.js')
+                    .then(function(registration) {
+                        console.log('Service Worker registered');
+                    })
+                    .catch(function(error) {
+                        console.log('Service Worker registration failed:', error);
+                    });
+                });
+            }
+        </script>
+    """
+    st.markdown(pwa_tags, unsafe_allow_html=True)
 
 # Initialize connection
 def init_connection():
@@ -34,12 +60,12 @@ def get_voter_data():
     conn = init_connection()
     tables = ['porebada_east_male', 'porebada_east_female', 'porebada_west_male_female']
     voters = []
-    
+
     for table in tables:
         query = f"SELECT name, dob, electoral_id FROM {table}"
         df = pd.read_sql_query(query, conn)
         voters.append(df)
-    
+
     conn.close()
     return pd.concat(voters, ignore_index=True)
 
@@ -47,14 +73,14 @@ def get_voter_data():
 def init_database():
     conn = init_connection()
     cur = conn.cursor()
-    
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS candidates (
             id SERIAL PRIMARY KEY,
             name VARCHAR(100) UNIQUE NOT NULL
         )
     """)
-    
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS votes (
             id SERIAL PRIMARY KEY,
@@ -66,71 +92,76 @@ def init_database():
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT (NOW() AT TIME ZONE 'Pacific/Port_Moresby')
         )
     """)
-    
+
     conn.commit()
     conn.close()
 
+# Add sample candidates if none exist
 def add_sample_candidates():
     conn = init_connection()
     cur = conn.cursor()
-    
+
     cur.execute("SELECT COUNT(*) FROM candidates")
     count = cur.fetchone()[0]
-    
+
     if count == 0:
         sample_candidates = [
-            "John Smith",
-            "Mary Johnson",
-            "David Williams",
-            "Sarah Brown",
-            "Michael Davis"
+            "Candidate 1",
+            "Candidate 2",
+            "Candidate 3",
+            "Candidate 4",
+            "Candidate 5"
         ]
         
         for candidate in sample_candidates:
             cur.execute("INSERT INTO candidates (name) VALUES (%s)", (candidate,))
-    
+
     conn.commit()
     conn.close()
 
+# Verify voter credentials
 def verify_voter(name, dob):
     voters_df = get_voter_data()
     formatted_dob = format_date(dob)
     return voters_df[
-        (voters_df['name'].str.lower() == name.lower()) & 
+        (voters_df['name'].str.lower() == name.lower()) &
         (voters_df['dob'] == formatted_dob)
     ]
 
+# Cast a vote
 def cast_vote(voter_name, electoral_id, pref1, pref2, pref3):
     current_time = datetime.now(PNG_TZ)
-    
+
     conn = init_connection()
     cur = conn.cursor()
-    
+
     cur.execute("""
         INSERT INTO votes (voter_name, electoral_id, candidate_1, candidate_2, candidate_3, timestamp)
         VALUES (%s, %s, %s, %s, %s, %s)
     """, (voter_name, electoral_id, pref1, pref2, pref3, current_time))
-    
+
     conn.commit()
     conn.close()
 
+# Check if a voter has already voted
 def has_voted(electoral_id):
     conn = init_connection()
     cur = conn.cursor()
-    
+
     cur.execute("SELECT COUNT(*) FROM votes WHERE electoral_id = %s", (electoral_id,))
     count = cur.fetchone()[0]
-    
+
     conn.close()
     return count > 0
 
+# Get voting results
 def get_results():
     conn = init_connection()
     cur = conn.cursor()
-    
+
     cur.execute("SELECT id, name FROM candidates")
     candidates = dict(cur.fetchall())
-    
+
     preferences = {}
     for i in range(1, 4):
         cur.execute(f"""
@@ -140,7 +171,7 @@ def get_results():
             ORDER BY COUNT(*) DESC
         """)
         preferences[i] = {candidates[row[0]]: row[1] for row in cur.fetchall()}
-    
+
     cur.execute("""
         SELECT voter_name, 
                c1.name as pref1, 
@@ -154,21 +185,28 @@ def get_results():
         ORDER BY timestamp DESC
     """)
     history = cur.fetchall()
-    
+
     conn.close()
     return preferences, history
 
 def main():
-    st.set_page_config(page_title="LPV Voting System", layout="wide")
+    st.set_page_config(
+        page_title="LPV Voting System", 
+        page_icon=os.path.join('static', 'icon-192.png'),
+        layout="wide"
+    )
     
+    # Add PWA tags
+    add_pwa_tags()
+
     init_database()
     add_sample_candidates()
-    
+
     current_png_time = datetime.now(PNG_TZ).strftime("%Y-%m-%d %H:%M:%S %Z")
     st.sidebar.write(f"Current PNG Time: {current_png_time}")
-    
+
     page = st.sidebar.radio("Navigation", ["Login", "Results"])
-    
+
     if page == "Login":
         st.title("LPV Voting System - Login")
         
@@ -237,7 +275,7 @@ def main():
                         st.success("Vote cast successfully!")
                         del st.session_state['voter']
                         st.rerun()
-    
+
     else:  # Results page
         st.title("Voting Results")
         
