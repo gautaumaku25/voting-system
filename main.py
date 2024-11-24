@@ -11,7 +11,7 @@ import os
 # Set Papua New Guinea timezone
 PNG_TZ = pytz.timezone('Pacific/Port_Moresby')
 
-# Add PWA metadata to HTML head
+# PWA metadata to HTML head
 def add_pwa_tags():
     pwa_tags = """
         <link rel="manifest" href="static/manifest.json">
@@ -96,7 +96,7 @@ def init_database():
     conn.commit()
     conn.close()
 
-# Add sample candidates if none exist
+# sample candidates if none exist
 def add_sample_candidates():
     conn = init_connection()
     cur = conn.cursor()
